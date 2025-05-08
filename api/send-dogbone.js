@@ -1,46 +1,55 @@
-import { Connection, Keypair, PublicKey } from '@solana/web3.js';
+// /api/send-dogbone.js
+
+import { Connection, PublicKey, Keypair, clusterApiUrl } from '@solana/web3.js';
 import { getOrCreateAssociatedTokenAccount, transfer } from '@solana/spl-token';
 import bs58 from 'bs58';
 
-const connection = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
-const TOKEN_MINT_ADDRESS = "5dafyUzqfQPVT8GfsU4EjaaP66cY4dASsLFeTfNwEL5f";
-const PRIVATE_KEY = process.env.DOGBONE_PRIVATE_KEY;
-const senderKeypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
-
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).send({ message: "Only POST allowed" });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ message: 'Only POST allowed' });
+  }
 
   try {
-    const { wallet, amount } = req.body;
-    const recipient = new PublicKey(wallet);
-    const mint = new PublicKey(TOKEN_MINT_ADDRESS);
+    const { recipient, amount } = req.body;
 
-    const senderTokenAccount = await getOrCreateAssociatedTokenAccount(
+    if (!recipient || !amount) {
+      return res.status(400).json({ error: 'Recipient and amount are required' });
+    }
+
+    const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
+
+    const secretKey = bs58.decode(process.env.DOGBONE_PRIVATE_KEY);
+    const fromWallet = Keypair.fromSecretKey(secretKey);
+
+    const DOGBONE_MINT = new PublicKey('5dafyUzqfQPVT8GfsU4EjaaP66cY4dASsLFeTfNwEL5f');
+    const toPublicKey = new PublicKey(recipient);
+
+    const fromTokenAccount = await getOrCreateAssociatedTokenAccount(
       connection,
-      senderKeypair,
-      mint,
-      senderKeypair.publicKey
+      fromWallet,
+      DOGBONE_MINT,
+      fromWallet.publicKey
     );
 
-    const recipientTokenAccount = await getOrCreateAssociatedTokenAccount(
+    const toTokenAccount = await getOrCreateAssociatedTokenAccount(
       connection,
-      senderKeypair,
-      mint,
-      recipient
+      fromWallet,
+      DOGBONE_MINT,
+      toPublicKey
     );
 
     const signature = await transfer(
       connection,
-      senderKeypair,
-      senderTokenAccount.address,
-      recipientTokenAccount.address,
-      senderKeypair.publicKey,
-      amount
+      fromWallet,
+      fromTokenAccount.address,
+      toTokenAccount.address,
+      fromWallet,
+      Number(amount) * 10 ** 8 // Using 8 decimals
     );
 
-    res.status(200).json({ message: `Sent ${amount} $DOGBONE! Tx: ${signature}` });
-  } catch (e) {
-    console.error("Token send error:", e);
-    res.status(500).json({ message: "Error sending token" });
+    return res.status(200).json({ message: 'Transfer successful', signature });
+  } catch (error) {
+    console.error('Transfer error:', error);
+    return res.status(500).json({ error: 'Transfer failed', details: error.message });
   }
 }
